@@ -5,6 +5,7 @@
 output.json
 output-metadata.json
 out/
+build-outputs/
 
 # files for the dex VM
 *.dex
