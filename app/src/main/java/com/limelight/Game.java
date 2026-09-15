@@ -432,8 +432,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             gamepadMask = 1;
         }
         if (prefConfig.onscreenController) {
-            // If we're using OSC, always set at least gamepad 1.
-            gamepadMask |= 1;
+            // If we're using OSC, always set at least gamepad 1 if no gamepad was detected.
+            if (gamepadMask == 0) {
+                gamepadMask |= 1;
+            }
         }
 
         // Set to the optimal mode for streaming

@@ -153,6 +153,20 @@
             android:summary="@string/summary_checkbox_show_onscreen_controls"
             android:title="@string/title_checkbox_show_onscreen_controls" />
         <CheckBoxPreference
+            android:defaultValue="true"
+            android:dependency="checkbox_show_onscreen_controls"
+            android:key="checkbox_separate_osc"
+            android:summary="@string/summary_checkbox_separate_osc"
+            android:title="@string/title_checkbox_separate_osc" />
+        <ListPreference
+            android:key="list_osc_player_assignment"
+            android:dependency="checkbox_separate_osc"
+            android:title="@string/title_list_osc_player_assignment"
+            android:summary="@string/summary_list_osc_player_assignment"
+            android:entries="@array/osc_player_assignment_names"
+            android:entryValues="@array/osc_player_assignment_values"
+            android:defaultValue="auto" />
+        <CheckBoxPreference
             android:key="checkbox_vibrate_osc"
             android:dependency="checkbox_show_onscreen_controls"
             android:title="@string/title_checkbox_vibrate_osc"

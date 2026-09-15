@@ -115,6 +115,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     private final Activity activityContext;
     private final double stickDeadzone;
     private final InputDeviceContext defaultContext = new InputDeviceContext();
+    private final VirtualControllerContext oscContext = new VirtualControllerContext();
     private final GameGestures gestures;
     private final InputManager inputManager;
     private final Vibrator deviceVibrator;
@@ -178,6 +179,19 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
         }
 
+        if (prefConfig.usbDriver) {
+            UsbManager usbManager = (UsbManager) activityContext.getSystemService(Context.USB_SERVICE);
+            if (usbManager != null) {
+                for (UsbDevice dev : usbManager.getDeviceList().values()) {
+                    if (UsbDriverService.shouldClaimDevice(dev, false) &&
+                            !UsbDriverService.isRecognizedInputDevice(dev)) {
+                        hasGameController = true;
+                        break;
+                    }
+                }
+            }
+        }
+
         // 1% is the lowest possible deadzone we support
         if (deadzonePercentage <= 0) {
             deadzonePercentage = 1;
@@ -211,6 +225,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         // currentControllers set which will allow them to properly unplug
         // if they are removed.
         initialControllers = getAttachedControllerMask(activityContext);
+
+        if (prefConfig.onscreenController) {
+            assignOscControllerNumber();
+        }
 
         // Register ourselves for input device notifications
         inputManager.registerInputDeviceListener(this, null);
@@ -289,6 +307,11 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             deviceContext.destroy();
         }
 
+        if (oscContext.reservedControllerNumber) {
+            releaseControllerNumber(oscContext);
+        }
+        oscContext.destroy();
+
         deviceVibrator.cancel();
     }
 
@@ -366,6 +389,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     public static short getAttachedControllerMask(Context context) {
+        PreferenceConfiguration prefConfig = PreferenceConfiguration.readPreferences(context);
         int count = 0;
         short mask = 0;
 
@@ -384,7 +408,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
 
         // Count all USB devices that match our drivers
-        if (PreferenceConfiguration.readPreferences(context).usbDriver) {
+        if (prefConfig.usbDriver) {
             UsbManager usbManager = (UsbManager) context.getSystemService(Context.USB_SERVICE);
             if (usbManager != null) {
                 for (UsbDevice dev : usbManager.getDeviceList().values()) {
@@ -399,9 +423,22 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
         }
 
-        if (PreferenceConfiguration.readPreferences(context).onscreenController) {
+        if (prefConfig.onscreenController) {
             LimeLog.info("Counting OSC gamepad");
-            mask |= 1;
+            if (prefConfig.separateOscController && prefConfig.multiController) {
+                if ("player2".equals(prefConfig.oscPlayerAssignment)) {
+                    mask |= (1 << 0) | (1 << 1);
+                } else if ("player1".equals(prefConfig.oscPlayerAssignment)) {
+                    mask |= (1 << 0);
+                    if (count > 0) {
+                        mask |= (1 << 1);
+                    }
+                } else {
+                    mask |= (1 << count++);
+                }
+            } else {
+                mask |= 1;
+            }
         }
 
         LimeLog.info("Enumerated "+count+" gamepads");
@@ -450,6 +487,55 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
 
         return true;
+    }
+
+    private void assignOscControllerNumber() {
+        if (oscContext.assignedControllerNumber) {
+            return;
+        }
+
+        if (!prefConfig.multiController || !prefConfig.separateOscController) {
+            oscContext.controllerNumber = 0;
+            oscContext.assignedControllerNumber = true;
+            oscContext.reservedControllerNumber = false;
+            LimeLog.info("OSC sharing controller 0 (legacy mode)");
+            return;
+        }
+
+        short desiredNumber;
+        if ("player1".equals(prefConfig.oscPlayerAssignment)) {
+            desiredNumber = 0;
+        } else if ("player2".equals(prefConfig.oscPlayerAssignment)) {
+            desiredNumber = 1;
+        } else {
+            // Auto: If physical gamepad is attached, prefer Player 2 (slot 1) so physical controller gets Player 1 (slot 0)
+            if (hasGameController) {
+                desiredNumber = 1;
+            } else {
+                desiredNumber = 0;
+            }
+        }
+
+        if ((currentControllers & (1 << desiredNumber)) == 0) {
+            currentControllers |= (1 << desiredNumber);
+            initialControllers &= ~(1 << desiredNumber);
+            oscContext.controllerNumber = desiredNumber;
+            oscContext.reservedControllerNumber = true;
+        } else {
+            for (short i = 0; i < MAX_GAMEPADS; i++) {
+                if ((currentControllers & (1 << i)) == 0) {
+                    currentControllers |= (1 << i);
+                    initialControllers &= ~(1 << i);
+                    oscContext.controllerNumber = i;
+                    oscContext.reservedControllerNumber = true;
+                    break;
+                }
+            }
+        }
+
+        oscContext.assignedControllerNumber = true;
+        LimeLog.info("Assigned OSC as controller " + oscContext.controllerNumber);
+        oscContext.sendControllerArrival();
     }
 
     // Called before sending input but after we've determined that this
@@ -1076,7 +1162,11 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
     private short getActiveControllerMask() {
         if (prefConfig.multiController) {
-            return (short)(currentControllers | initialControllers | (prefConfig.onscreenController ? 1 : 0));
+            short oscMask = 0;
+            if (prefConfig.onscreenController && oscContext.assignedControllerNumber) {
+                oscMask = (short)(1 << oscContext.controllerNumber);
+            }
+            return (short)(currentControllers | initialControllers | oscMask);
         }
         else {
             // Only Player 1 is active with multi-controller disabled
@@ -1257,6 +1347,15 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             leftStickY |= maxByMagnitude(leftStickY, defaultContext.leftStickY);
             rightStickX |= maxByMagnitude(rightStickX, defaultContext.rightStickX);
             rightStickY |= maxByMagnitude(rightStickY, defaultContext.rightStickY);
+        }
+        if (oscContext.assignedControllerNumber && oscContext.controllerNumber == controllerNumber) {
+            inputMap |= oscContext.inputMap;
+            leftTrigger |= maxByMagnitude(leftTrigger, oscContext.leftTrigger);
+            rightTrigger |= maxByMagnitude(rightTrigger, oscContext.rightTrigger);
+            leftStickX |= maxByMagnitude(leftStickX, oscContext.leftStickX);
+            leftStickY |= maxByMagnitude(leftStickY, oscContext.leftStickY);
+            rightStickX |= maxByMagnitude(rightStickX, oscContext.rightStickX);
+            rightStickY |= maxByMagnitude(rightStickY, oscContext.rightStickY);
         }
 
         if (originalContext.mouseEmulationActive) {
@@ -2096,15 +2195,13 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
         }
 
-        // We may decide to rumble the device for player 1
-        if (controllerNumber == 0) {
-            // If we didn't find a matching device, it must be the on-screen
-            // controls that triggered the rumble. Vibrate the device if
-            // the user has requested that behavior.
-            if (!foundMatchingDevice && prefConfig.onscreenController && !prefConfig.onlyL3R3 && prefConfig.vibrateOsc) {
-                rumbleSingleVibrator(deviceVibrator, lowFreqMotor, highFreqMotor);
-            }
-            else if (foundMatchingDevice && !vibrated && prefConfig.vibrateFallbackToDevice) {
+        // Check if this rumble event is for the on-screen controller
+        if (prefConfig.onscreenController && !prefConfig.onlyL3R3 && prefConfig.vibrateOsc &&
+                oscContext.assignedControllerNumber && oscContext.controllerNumber == controllerNumber) {
+            rumbleSingleVibrator(deviceVibrator, lowFreqMotor, highFreqMotor);
+        }
+        else if (controllerNumber == 0) {
+            if (foundMatchingDevice && !vibrated && prefConfig.vibrateFallbackToDevice) {
                 // We found a device to vibrate but it didn't have rumble support. The user
                 // has requested us to vibrate the device in this case.
 
@@ -2788,18 +2885,20 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                                short leftStickX, short leftStickY,
                                short rightStickX, short rightStickY,
                                byte leftTrigger, byte rightTrigger) {
-        defaultContext.leftStickX = leftStickX;
-        defaultContext.leftStickY = leftStickY;
+        assignOscControllerNumber();
 
-        defaultContext.rightStickX = rightStickX;
-        defaultContext.rightStickY = rightStickY;
+        oscContext.leftStickX = leftStickX;
+        oscContext.leftStickY = leftStickY;
 
-        defaultContext.leftTrigger = leftTrigger;
-        defaultContext.rightTrigger = rightTrigger;
+        oscContext.rightStickX = rightStickX;
+        oscContext.rightStickY = rightStickY;
 
-        defaultContext.inputMap = buttonFlags;
+        oscContext.leftTrigger = leftTrigger;
+        oscContext.rightTrigger = rightTrigger;
 
-        sendControllerInputPacket(defaultContext);
+        oscContext.inputMap = buttonFlags;
+
+        sendControllerInputPacket(oscContext);
     }
 
     @Override
@@ -2931,6 +3030,27 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
 
         public void sendControllerArrival() {}
+    }
+
+    class VirtualControllerContext extends GenericControllerContext {
+        public VirtualControllerContext() {
+            this.external = false;
+        }
+
+        @Override
+        public void sendControllerArrival() {
+            int supportedButtonFlags = ControllerPacket.A_FLAG | ControllerPacket.B_FLAG |
+                    ControllerPacket.X_FLAG | ControllerPacket.Y_FLAG |
+                    ControllerPacket.UP_FLAG | ControllerPacket.DOWN_FLAG |
+                    ControllerPacket.LEFT_FLAG | ControllerPacket.RIGHT_FLAG |
+                    ControllerPacket.LB_FLAG | ControllerPacket.RB_FLAG |
+                    ControllerPacket.LS_CLK_FLAG | ControllerPacket.RS_CLK_FLAG |
+                    ControllerPacket.PLAY_FLAG | ControllerPacket.BACK_FLAG |
+                    ControllerPacket.SPECIAL_BUTTON_FLAG;
+
+            conn.sendControllerArrivalEvent((byte)controllerNumber, getActiveControllerMask(),
+                    MoonBridge.LI_CTYPE_XBOX, supportedButtonFlags, (short)0);
+        }
     }
 
     class InputDeviceContext extends GenericControllerContext {

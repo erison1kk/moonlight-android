@@ -205,6 +205,13 @@
     <string name="category_on_screen_controls_settings">On-screen Controls Settings</string>
     <string name="title_checkbox_show_onscreen_controls">Show on-screen controls</string>
     <string name="summary_checkbox_show_onscreen_controls">Show virtual controller overlay on touchscreen</string>
+    <string name="title_checkbox_separate_osc">Separate on-screen controller</string>
+    <string name="summary_checkbox_separate_osc">Treat on-screen controls as an independent virtual gamepad for multiplayer</string>
+    <string name="title_list_osc_player_assignment">On-screen controller player slot</string>
+    <string name="summary_list_osc_player_assignment">Select which virtual controller slot is assigned to on-screen controls</string>
+    <string name="osc_player_auto">Auto (Player 2 when physical gamepad connected)</string>
+    <string name="osc_player_2">Player 2 (Physical controller as Player 1)</string>
+    <string name="osc_player_1">Player 1 (Physical controller as Player 2)</string>
     <string name="title_checkbox_vibrate_osc">Enable vibration</string>
     <string name="summary_checkbox_vibrate_osc">Vibrates your device to emulate rumble for the on-screen controls</string>
     <string name="title_only_l3r3">Only show L3 and R3</string>
